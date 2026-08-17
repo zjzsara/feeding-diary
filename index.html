@@ -818,19 +818,35 @@ async function ddFetchCloud(dateKey) {
 }
 
 // 上传某天数据到云端（使用 GET 请求 + URL参数，绕过 CORS OPTIONS 预检）
-async function ddPushCloud(dateKey) {
-  if (!SYNC_ENABLED) return;
-  try {
-    var encodedData = encodeURIComponent(JSON.stringify(data));
-    var url = SYNC_API + "/api/records?date=" + encodeURIComponent(dateKey)
-            + "&action=save&data=" + encodedData
-            + "&device_id=" + encodeURIComponent(DD_DEVICE_ID)
-            + "&_t=" + Date.now();
-    await fetch(url, { method: "GET", mode: "cors", cache: "no-cache" });
-  } catch(e) {
-    console.log('[云端同步] 保存失败，数据保留在本地');
-  }
-}
+async function pushToCloud(dateKey, deviceId, jsonData) {
+        if (!SYNC_ENABLED) return;
+        
+        try {
+            // 1. 用 URLSearchParams 包装数据，这比直接拼字符串更安全，且避免了复杂 Content-Type 导致的 OPTIONS 预检
+            const params = new URLSearchParams();
+            params.append('date_key', dateKey);
+            params.append('device_id', deviceId);
+            params.append('data', jsonData); // 这里传的是 JSON 字符串
+            
+            const url = `${SYNC_API}/api/records`;
+            
+            console.log('正在同步数据...'); // 打开 F12 Console 看日志
+            
+            // 2. 使用 POST + body 发送，但 Header 只用最简单的 form 格式，避开复杂的 JSON 预检
+            await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: params
+            });
+            
+            console.log('同步成功');
+            
+        } catch (e) {
+            console.log('云端同步失败，数据保留在本地', e);
+        }
+    }
 // ===== ☁️ 云端同步模块结束 =====
 
 // ===== 工具函数 =====
