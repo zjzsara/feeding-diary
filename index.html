@@ -1106,7 +1106,7 @@ function seedHistory() {
 function saveData() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
   var k = dateKey(currentDate || TODAY);
-  ddPushCloud(k); // 异步上传，不阻塞保存
+  pushToCloud(k, DD_DEVICE_ID, JSON.stringify(data)); // 异步上传，不阻塞保存
 }
 
 // ===== 渲染：日期 + 周视图（唯一横条）=====
