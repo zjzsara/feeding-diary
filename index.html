@@ -804,32 +804,52 @@ function getDeviceId() {
 }
 var DD_DEVICE_ID = getDeviceId();
 
-// 从云端拉取某天数据
+// 从云端拉取某天数据（兼容 workers.dev 跨域）
 async function ddFetchCloud(dateKey) {
   if (!SYNC_ENABLED) return null;
   try {
-    var res = await fetch(SYNC_API + "/api/records?date=" + encodeURIComponent(dateKey));
+    var res = await fetch(SYNC_API + "/api/records?date=" + encodeURIComponent(dateKey), {
+      method: "GET",
+      mode: "cors",
+      headers: { 
+        "Accept": "application/json",
+        "Origin": location.origin
+      }
+    });
     if (!res.ok) return null;
     var arr = await res.json();
-    if (Array.isArray(arr) && arr.length > 0) return arr;
-  } catch(e) {}
+    if (Array.isArray(arr)) return arr;
+  } catch(e) {
+    console.log("[咚咚辅食] 拉取云端数据失败: " + e.message);
+  }
   return null;
 }
 
-// 上传某天数据到云端
+// 上传某天数据到云端（兼容 workers.dev 跨域）
 async function ddPushCloud(dateKey) {
   if (!SYNC_ENABLED) return;
   try {
-    await fetch(SYNC_API + "/api/records", {
+    var resp = await fetch(SYNC_API + "/api/records", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      mode: "cors",
+      headers: { 
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
       body: JSON.stringify({
         date_key: dateKey,
         device_id: DD_DEVICE_ID,
         data: JSON.stringify(data)
       })
     });
-  } catch(e) {}
+    if (resp.ok) {
+      console.log("[咚咚辅食] 云端同步成功 ✅");
+    } else {
+      console.log("[咚咚辅食] 云端同步返回 " + resp.status);
+    }
+  } catch(e) {
+    console.log("[咚咚辅食] 云端同步失败: " + e.message);
+  }
 }
 // ===== ☁️ 云端同步模块结束 =====
 
@@ -946,38 +966,11 @@ try { data = JSON.parse(rawData || '{}'); } catch(e) { data = {}; }
 
 var DATA_LOADED = !!(rawData && data && (data.settings || data.meals));
 
-// ===== ☁️ 云端数据合并（启动时用）=====
-// 策略：先尝试从云端拉取当天数据，成功则用云端（已合并多设备）
-(async function initCloudSync() {
-  if (!SYNC_ENABLED) return;
-  try {
-    var cloudArr = await ddFetchCloud(dateKey(TODAY));
-    if (cloudArr && cloudArr.length > 0) {
-      // 云端有数据：合并本地与云端
-      // 本地优先保留未同步的改动，云端为权威
-      var cloudMerged = JSON.parse(JSON.stringify(data));
-      for (var i = 0; i < cloudArr.length; i++) {
-        var item = cloudArr[i];
-        if (item.device_id === DD_DEVICE_ID && item.data) {
-          try {
-            var cd = JSON.parse(item.data);
-            // 用云端本设备数据覆盖本地对应部分
-            for (var sk in cd) {
-              if (sk === "meals" || sk === "settings" || sk === "ad" || sk === "notice" || sk === "makeup") {
-                cloudMerged[sk] = cd[sk];
-              }
-            }
-          } catch(e) {}
-        }
-      }
-      data = cloudMerged;
-      console.log("[咚咚辅食] 已从云端同步数据 ✅");
-    }
-  } catch(e) {
-    console.log("[咚咚辅食] 云端同步失败，使用本地数据 ⚠️");
-  }
-})();
-// ===== ☁️ 云端数据合并结束 =====
+// ===== ☁️ 云端同步说明 =====
+// 同步逻辑在 renderAll() 中自动调用 syncFromCloudIfNeeded()
+// 每次切换日期/页面都会尝试从云端拉取最新数据
+// 保存数据时自动上传到云端（见 saveData() → ddPushCloud()）
+// ===== ☁️ 云端同步模块结束 =====
 
 
 if (!data.meals) data.meals = {};
@@ -2286,7 +2279,42 @@ var exitBtn = document.getElementById('exitAdminBtn');
 if (exitBtn) exitBtn.addEventListener('click', exitAdminMode);
 
 // ===== 初始化 =====
-function renderAll() { renderDate(); renderToday(); if (document.getElementById('tab-edit').classList.contains('active')) renderEdit(); }
+// 每次渲染时尝试从云端同步当前日期的数据
+async function syncFromCloudIfNeeded() {
+  if (!SYNC_ENABLED) return;
+  var key = dateKey(currentDate);
+  try {
+    var arr = await ddFetchCloud(key);
+    if (arr && arr.length > 0) {
+      var merged = JSON.parse(JSON.stringify(data));
+      for (var i = 0; i < arr.length; i++) {
+        var item = arr[i];
+        if (item.data) {
+          try {
+            var cd = JSON.parse(item.data);
+            for (var sk in cd) {
+              if (sk === "meals" || sk === "settings" || sk === "ad" || sk === "notice" || sk === "makeup") {
+                merged[sk] = cd[sk];
+              }
+            }
+          } catch(e) {}
+        }
+      }
+      data = merged;
+      console.log("[咚咚辅食] 已从云端同步 " + key + " 的数据 ✅");
+    }
+  } catch(e) {
+    console.log("[咚咚辅食] 云端同步 " + key + " 失败: " + e.message);
+  }
+}
+
+function renderAll() { 
+  renderDate(); 
+  renderToday(); 
+  if (document.getElementById('tab-edit').classList.contains('active')) renderEdit();
+  // 切换日期后异步从云端拉取最新数据
+  syncFromCloudIfNeeded();
+}
 
 function init() {
   if (DATA_LOADED) {
@@ -2296,6 +2324,8 @@ function init() {
   }
   ensureDailyMeals(dateKey(TODAY));
   saveData();
+  // 页面加载后也尝试从云端同步（覆盖 initCloudSync 的逻辑）
+  setTimeout(function(){ syncFromCloudIfNeeded(); }, 500);
   // 回填设置页
   document.getElementById('setName').value = data.settings.babyName || '咚咚';
   document.getElementById('setBirthday').value = data.settings.birthday || '';
