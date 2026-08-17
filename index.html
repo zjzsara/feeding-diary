@@ -791,7 +791,7 @@
 // ===== ☁️ 云端同步模块（Cloudflare D1 + Worker）=====
 // 修复：使用 GET 请求保存数据，绕过浏览器 CORS OPTIONS 预检拦截
 // 配置：改成你自己的 Worker 网址
-var SYNC_API = 'https://api.zjzsara.github.io';
+const SYNC_API = 'https://feeding-api.1056599579.workers.dev';
 var SYNC_ENABLED = true; // 正式启用设为 true；调试时可设为 false
 
 // 设备唯一标识（每台设备首次打开时生成）
